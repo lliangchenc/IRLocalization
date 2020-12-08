@@ -35,12 +35,14 @@ namespace OculusSampleFramework
 
         private Transform src_trans, tgt_trans;
 
-        private string address = "172.20.10.4";
+        private string address = "10.0.0.3";
         private int port = 3417;
 
         private TcpClient client;
         private NetworkStream stream;
         Thread t;
+
+        private bool triggerFlag = false;
 
         public bool UseSpherecast
         {
@@ -99,6 +101,8 @@ namespace OculusSampleFramework
         }
 
         void Update(){
+            OVRInput.Update();
+            checkTrigger();
             src_trans = GameObject.Find("OVRCameraRig/TrackingSpace/RightHandAnchor").transform;
             tgt_trans = GameObject.Find("Sphere").transform;
             rel_vec = tgt_trans.position - src_trans.position;
@@ -110,7 +114,23 @@ namespace OculusSampleFramework
             rt3.GetComponent<Text>().text = "Tgt Sig " + (100*tgt_sig).ToString("0.000");
             rt4.GetComponent<Text>().text = "Rel Vec " + (-rel_vec).ToString("0.000");
             GameObject.Find("Sphere").GetComponent<Renderer>().material.color = new Color(255,255,255) * tgt_sig;
-            TcpSendMessage("[" + src_trans.forward.ToString("0.000000") + "," + (100*tgt_sig).ToString("0.000000") + "," + rel_vec.ToString("0.000000") + "]@");
+            TcpSendMessage("[" + src_trans.forward.ToString("0.000000") + "," + (100*tgt_sig).ToString("0.000000") + "," + rel_vec.ToString("0.000000") + "," + src_trans.position.ToString("0.000000") + "]@");
+        }
+
+        void checkTrigger()
+        {
+            if (OVRInput.Get(OVRInput.Button.One))
+            {
+                if (!triggerFlag)
+                {
+                    rt0.GetComponent<Text>().text = "button triggered!";
+                    TcpSendMessage("[]@");
+                    triggerFlag = true;
+                }
+            } else {
+                triggerFlag = false;
+                rt0.GetComponent<Text>().text = "button not triggered.";
+            }
         }
 
         public void ToggleSphereCasting(Toggle t)
