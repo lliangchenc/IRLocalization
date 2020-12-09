@@ -45,6 +45,13 @@ public class Server : MonoBehaviour
         ConnectToServer();
     }
 
+    void OnDisable()
+    {
+    	if (client != null) {
+    		client.Close();
+    	}
+    }
+
     // Update is called once per frame
     void Update()
     {
@@ -72,7 +79,7 @@ public class Server : MonoBehaviour
 	        		msg += ", " + tgt_sig.ToString("0.000000");
 	        		msg += ", " + rel_vec.ToString("0.000000");
 	        	}
-	        	msg += "]";
+	        	msg += "]@";
 	        	TcpSendMessage(msg);
 			}
         }
@@ -82,8 +89,7 @@ public class Server : MonoBehaviour
     	if (OVRInput.Get(OVRInput.Button.One)) {
     		// if Button 'A' is triggered in this frame, start/stop sending data
     		if (!sendDataFlag) {
-    			string config = getSceneConfig();
-    			TcpSendMessage(msg);
+    			TcpSendMessage(getSceneConfig());
     			sendDataFlag = true;
     		}
     	} else {
@@ -93,7 +99,7 @@ public class Server : MonoBehaviour
     	if (OVRInput.Get(OVRInput.Button.Two)) {
     		// if Button 'B' is triggered, send an empty frame indicating the left/right edge
     		if (!emptyFrameFlag) {
-    			TcpSendMessage("[]");
+    			TcpSendMessage("[]@");
     			emptyFrameFlag = true;
     		}
     	} else {
@@ -106,7 +112,7 @@ public class Server : MonoBehaviour
     	ShowSliderValue lengthSlider = GameObject.Find("Menu/LengthSlider/ThumbRoot/ValueLength").GetComponent<ShowSliderValue>();
     	string distance = distanceSlider.getValue().ToString("0.000000");
     	string length = lengthSlider.getValue().ToString("0.000000");
-    	return $"[{distance}, {length}]";
+    	return $"[{distance}, {length}]@";
     }
 
     private void ConnectToServer() {
