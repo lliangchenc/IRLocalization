@@ -14,7 +14,7 @@ from window import Window
 from visualize import Visualizer
 
 HOST = '0.0.0.0'
-PORT = 3528
+PORT = 3527
 SERIAL_PORT = '/dev/cu.usbmodem142101'
 WINDOW_SIZE = 20
 
@@ -111,3 +111,4 @@ if __name__ == '__main__':
 	key = input('PRESS ENTER TO END')
 
 	conn.close()
+	collector.save_data(args.saved_path)

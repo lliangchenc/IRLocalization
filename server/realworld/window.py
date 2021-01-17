@@ -9,7 +9,7 @@ class Window():
         return len(self.window) == self.size
 
     def pop(self):
-        self.window = self.window[:-1]
+        self.window = self.window[1:]
 
     def push(self, item):
         if self.is_full():

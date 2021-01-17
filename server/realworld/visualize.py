@@ -14,12 +14,13 @@ def plot(data, ax=None, scatter=None):
 		for d in data:
 			quat_arr.append(d[0])
 			radiance_arr.append(d[1])
-		vec_arr = np.array([quat2vec(q) for q in quat_arr])
-		vec_origin = vec_arr[0]
-		vec_origin = vec_origin / np.linalg.norm(vec_origin)
-		for vec in vec_arr:
-			vec = normalized(vec)
-			theta_arr.append(np.arccos(vec.dot(vec_origin)))	
+		vec_origin = normalized(quat_to_mat(quat_arr[0])[1])
+		for q in quat_arr:
+			mat = quat_to_mat(q)
+			vec_forward = normalized(mat[1])
+			vec_upper = mat[2]
+			sgn = np.sign(np.cross(vec_origin, vec_forward).dot(vec_upper))
+			theta_arr.append(np.arccos(vec_forward.dot(vec_origin)) * sgn)
 
 	if ax is not None:
 		return ax.scatter(np.degrees(theta_arr), radiance_arr, s=5.0)
@@ -51,6 +52,8 @@ class Visualizer():
 		for key in init_data_dict:
 			key_cnt += 1
 			self.axes[key] = plt.subplot(subplot_base + key_cnt)
+			self.axes[key].set_xlim(-60, 60)
+			self.axes[key].set_ylim(0, 1200)
 			self.axes[key].set_title(key)            
 			self.scatters[key] = plot(self.data_dict[key], ax=self.axes[key])
 
