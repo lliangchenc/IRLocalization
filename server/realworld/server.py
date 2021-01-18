@@ -11,7 +11,7 @@ import numpy as np
 import time
 from scipy.optimize import leastsq
 from window import Window
-from visualize import Visualizer
+from visualize import DataCollectionVisualizer
 
 HOST = '0.0.0.0'
 PORT = 3527
@@ -23,12 +23,15 @@ class DataCollector():
 		self.serial_window = Window(WINDOW_SIZE)
 		self.ser = serial.Serial(SERIAL_PORT)
 		self.lock = Lock()
-		self.data_dict = {'CALI_GYRO': []}
-		self.visualizer = Visualizer(self.data_dict)
+		self.data = {
+			'quats': [],
+			'radiances': []
+		}
+		self.visualizer = DataCollectionVisualizer(self.data)
 
 	def save_data(self, path):
 		with open(path, 'wb') as f:
-			pickle.dump(self.data_dict, f)
+			pickle.dump(self.data, f)
 
 	def start_serial_thread(self):
 		t = threading.Thread(target=self.__recv_data_from_serial, daemon=True)
@@ -46,17 +49,8 @@ class DataCollector():
 		t = threading.Thread(target=self.__recv_data_from_socket, daemon=True)
 		t.start()
 
-	def __recv_data_from_socket(self, energy_func=None):
-		data_window_cali_gyro = Window(WINDOW_SIZE)
-
-		def fit_func(v0, rot_arr):
-			d = np.linalg.norm(v0)
-			v0_normalized = v0 / d
-			theta_arr = np.arccos(np.dot(rot_arr, v0_normalized))
-			return 100 * energy_func(theta_arr, d)
-
-		def residual_func(v0, rot_arr, intensity_arr):
-			return (fit_func(v0, rot_arr) - intensity_arr) ** 2
+	def __recv_data_from_socket(self):
+		quat_window = Window(WINDOW_SIZE)
 
 		while True:	
 			quat_buf = conn.recv(1024)
@@ -64,25 +58,20 @@ class DataCollector():
 				break
 
 			self.lock.acquire()
-			ir_intensity = self.serial_window.mean_filter()
+			ir_radiance = self.serial_window.mean_filter()
 			self.lock.release()
 
 			multi_quat_list = quat_buf.decode("utf-8").split('\n')[:-1]		# a list of string, each line contains quaternions from multi sources, separated by ';'
 			for multi_quat in multi_quat_list:
 				multi_quat = multi_quat.split(';')[:-1]
 				multi_quat = [[float(dim) for dim in quat.split(' ')] for quat in multi_quat]	# change quat from str to [float, float, float]
-				data_window_cali_gyro.push(multi_quat[0])
+				quat_window.push(multi_quat[0])
 
-			quat_cali_gyro = data_window_cali_gyro.get_last()
+			quat = quat_window.get_last()
 
-			self.data_dict['CALI_GYRO'].append([quat_cali_gyro, ir_intensity])
-			self.visualizer.update_data(self.data_dict)
-			
-			# if energy_func:
-			# 	window = data[-WINDOW_SIZE:]
-			# 	rot_arr = np.array(x[0] for x in window)		# device's orientation
-			# 	intensity_arr = np.array(x[1] for x in window)	# ir intensity
-			# 	pos_quat = leastsq(residual_func, v0, args=(rot_arr, intensity_arr))[0]
+			self.data['quats'].append(quat)
+			self.data['radiances'].append(ir_radiance)
+			self.visualizer.update_data(self.data)
 
 
 if __name__ == '__main__':
