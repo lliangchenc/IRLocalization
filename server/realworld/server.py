@@ -12,15 +12,16 @@ import time
 from scipy.optimize import leastsq
 from window import Window
 from visualize import DataCollectionVisualizer
-from copy import deepcopy
+from utils import *
 
 HOST = '0.0.0.0'
-PORT = 3527
+PORT = 3528
 SERIAL_PORT = '/dev/cu.usbmodem142101'
-WINDOW_SIZE = 20
+WINDOW_SIZE = 10
+PRED_WIN_SIZE = 20
 
-class DataCollector():
-	def __init__(self):
+class Server():
+	def __init__(self, energy_func=None):
 		self.serial_window = Window(WINDOW_SIZE)
 		self.ser = serial.Serial(SERIAL_PORT)
 		self.lock = Lock()
@@ -33,6 +34,7 @@ class DataCollector():
 			'quats': [],
 			'radiances': []
 		}
+		self.energy_func = energy_func
 
 	def save_data(self, path):
 		with open(path, 'wb') as f:
@@ -52,9 +54,25 @@ class DataCollector():
 				self.raw_data['radiances'].append(float(buf))
 			self.lock.release()
 
-	def start_socket_thread(self, energy_func):
+	def start_socket_thread(self):
 		t = threading.Thread(target=self.__recv_data_from_socket, daemon=True)
 		t.start()
+
+	def __fit_func(vec, quats):
+		d = np.linalg.norm(vec)
+		vec = vec / d
+		radiances = []
+		for q in quats:
+			mat = quat_to_mat[0]
+			forward_vec = normalized(mat[1])
+			upper_vec = mat[2]
+			sgn = np.sign(np.cross(vec, vec_forward),dot(vec_upper))
+			angle = np.arccos(forward_vec.dot(vec) * sgn)
+			radiances.append(self.energy_func(angle, d))
+		return radiances
+
+	def __residual_func(vec, quats, radiances):
+		return (self.__fit_func(vec, quats) - radiances) ** 2
 
 	def __recv_data_from_socket(self):
 		quat_window = Window(WINDOW_SIZE)
@@ -64,10 +82,10 @@ class DataCollector():
 			if not quat_buf:
 				break
 
-			self.lock.acquire()
-			ir_radiance = self.serial_window.mean_filter()
-			rad_idx = len(self.raw_data['radiances']) - 1
-			self.lock.release()
+			with self.lock:
+				ir_radiance = self.serial_window.mean_filter()
+				# print('mean: ', ir_radiance)
+				rad_idx = len(self.raw_data['radiances']) - 1
 
 			multi_quat_list = quat_buf.decode("utf-8").split('\n')[:-1]		# a list of string, each line contains quaternions from multi sources, separated by ';'
 			for multi_quat in multi_quat_list:
@@ -80,6 +98,14 @@ class DataCollector():
 			with self.visualizer.lock:
 				self.data['quats'].append(quat)
 				self.data['radiances'].append(ir_radiance)
+
+			if self.energy_func:
+				quats = self.data['quats'][-PRED_WIN_SIZE:]
+				radiances = self.data['radiances'][-PRED_WIN_SIZE:]
+				vec = leastsq(self.__residual_func, vec, args=(quats, radiances))[0]
+				with self.visualizer.lock:
+					self.data['vec'] = vec
+
 			self.visualizer.update_data(self.data)
 
 			self.raw_data['quats'].append([quat, rad_idx])
@@ -104,12 +130,12 @@ if __name__ == '__main__':
 	if args.function:
 		pass
 
-	collector = DataCollector()
-	collector.start_serial_thread()
-	collector.start_socket_thread(func)
-	collector.visualizer.visualize()
+	server = Server()
+	server.start_serial_thread()
+	server.start_socket_thread()
+	server.visualizer.visualize()
 
 	key = input('PRESS ENTER TO END')
 
 	conn.close()
-	collector.save_data(args.saved_path)
+	server.save_data(args.saved_path)

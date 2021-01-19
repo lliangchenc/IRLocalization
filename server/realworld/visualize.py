@@ -49,13 +49,15 @@ class EnergyFuncPlotter():
 		self.ax.set_xlim(-60, 60)
 		self.ax.set_ylim(0, 1200)
 		self.ax.set_title('Energy Function')
-		self.angles = []
+		self.quats = []
 		self.radiances = []
-		self.scatter = self.ax.scatter(self.angles, self.radiances, s=5.0)
+		self.scatter = self.ax.scatter([], [], s=5.0)
 		self.lock = threading.Lock()
 
 	def quats_to_angles(self, quats):
 		angles = []
+		if len(quats) == 0:
+			return []
 		vec_origin = normalized(quat_to_mat(quats[0])[1])
 		for q in quats:
 			if q == quats[0]:
@@ -66,14 +68,14 @@ class EnergyFuncPlotter():
 			vec_upper = mat[2]
 			sgn = np.sign(np.cross(vec_origin, vec_forward).dot(vec_upper))
 			angles.append(np.arccos(vec_forward.dot(vec_origin)) * sgn)
-		return angles
+		return np.degrees(angles)
 
 	def update_data(self, quats=None, radiances=None):
-		self.angles = self.quats_to_angles(quats)
+		self.quats = quats
 		self.radiances = radiances
 
 	def update_plot(self):
-		self.scatter.set_offsets(np.array([np.degrees(self.angles), self.radiances]).T)
+		self.scatter.set_offsets(np.array([self.quats_to_angles(self.quats), self.radiances]).T)
 		return self.scatter
 
 
@@ -87,9 +89,9 @@ class LocationPlotter():
 		self.send_pos = Position()
 		self.scatter = self.ax.scatter([self.recv_pos.x], [self.recv_pos.y])
 
-	def update_data(self, vec, dis):
+	def update_data(self, vec):
 		x, y, z = vec
-		self.send_pos.set(x * dis, y * dis)
+		self.send_pos.set(x, y)
 
 	def update_plot(self):
 		self.scatter.set_offsets([[self.recv_pos.x, self.recv_pos.y], [self.send_pos.x, self.send_pos.y]])
@@ -111,7 +113,7 @@ class Visualizer():
 				elif ptype == PlotterType.ENERGY_FUNC:
 					plotter.update_data(data['quats'], data['radiances'])
 				elif ptype == PlotterType.LOCATION:
-					plotter.update_data(data['vec'], data['dis'])
+					plotter.update_data(data['vec'])
 
 	def update_plots(self, step):
 		plots = []
