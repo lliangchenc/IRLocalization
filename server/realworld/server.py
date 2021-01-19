@@ -11,7 +11,7 @@ import numpy as np
 import time
 from scipy.optimize import leastsq
 from window import Window
-from visualize import DataCollectionVisualizer
+from visualize import DataCollectionVisualizer, LocalizationVisualizer
 from utils import *
 
 HOST = '0.0.0.0'
@@ -27,19 +27,22 @@ class Server():
 		self.lock = Lock()
 		self.data = {
 			'quats': [],
-			'radiances': []
+			'radiances': [],
+			'vec': [1, 0, 0]
 		}
-		self.visualizer = DataCollectionVisualizer()
+		# self.visualizer = DataCollectionVisualizer()
+		self.visualizer = LocalizationVisualizer()
 		self.raw_data = {
 			'quats': [],
 			'radiances': []
 		}
 		self.energy_func = energy_func
 
-	def save_data(self, path):
-		with open(path, 'wb') as f:
-			# pickle.dump(self.data, f)
-			pickle.dump(self.raw_data, f)
+	def save_data(self, path=None):
+		if path: 
+			with open(path, 'wb') as f:
+				# pickle.dump(self.data, f)
+				pickle.dump(self.raw_data, f)
 
 	def start_serial_thread(self):
 		t = threading.Thread(target=self.__recv_data_from_serial, daemon=True)
@@ -49,7 +52,7 @@ class Server():
 		while True:
 			buf = self.ser.readline().decode()[:-2]	# strip '\r\n'
 			self.lock.acquire()
-			if buf:
+			if len(buf) > 0:
 				self.serial_window.push(float(buf))
 				self.raw_data['radiances'].append(float(buf))
 			self.lock.release()
@@ -58,21 +61,28 @@ class Server():
 		t = threading.Thread(target=self.__recv_data_from_socket, daemon=True)
 		t.start()
 
-	def __fit_func(vec, quats):
+	def __energy_func(self, angles, dis, a=6.84091229e+02, b=8.39663324e-02, c=8.91691985e+01, sigma=9.70062189e-03):
+		return (a * np.exp(-np.tan(angles - b) ** 2 / sigma) \
+        	+ a * np.exp(-np.tan(angles + b) ** 2 / sigma)) / dis ** 2 + c
+
+	def __fit_func(self, vec, quats):
 		d = np.linalg.norm(vec)
 		vec = vec / d
 		radiances = []
 		for q in quats:
-			mat = quat_to_mat[0]
+			mat = quat_to_mat(q)
 			forward_vec = normalized(mat[1])
 			upper_vec = mat[2]
-			sgn = np.sign(np.cross(vec, vec_forward),dot(vec_upper))
+			sgn = np.sign(np.cross(vec, forward_vec).dot(upper_vec))
 			angle = np.arccos(forward_vec.dot(vec) * sgn)
-			radiances.append(self.energy_func(angle, d))
+			print(angle)
+			radiances.append(self.__energy_func(angle, d))	# TODO: normalize distance in energy function
+		print(quats[-5:], radiances[-5:])
 		return radiances
 
-	def __residual_func(vec, quats, radiances):
-		return (self.__fit_func(vec, quats) - radiances) ** 2
+	def __residual_func(self, vec, quats, radiances):
+		print(radiances)
+		return (np.array(self.__fit_func(vec, quats)) - np.array(radiances)) ** 2
 
 	def __recv_data_from_socket(self):
 		quat_window = Window(WINDOW_SIZE)
@@ -82,9 +92,9 @@ class Server():
 			if not quat_buf:
 				break
 
+			# TODO: wait for 10 frames of ir radiance
 			with self.lock:
 				ir_radiance = self.serial_window.mean_filter()
-				# print('mean: ', ir_radiance)
 				rad_idx = len(self.raw_data['radiances']) - 1
 
 			multi_quat_list = quat_buf.decode("utf-8").split('\n')[:-1]		# a list of string, each line contains quaternions from multi sources, separated by ';'
@@ -99,10 +109,12 @@ class Server():
 				self.data['quats'].append(quat)
 				self.data['radiances'].append(ir_radiance)
 
-			if self.energy_func:
+			if self.__energy_func and len(self.data['quats']) > PRED_WIN_SIZE:
 				quats = self.data['quats'][-PRED_WIN_SIZE:]
 				radiances = self.data['radiances'][-PRED_WIN_SIZE:]
-				vec = leastsq(self.__residual_func, vec, args=(quats, radiances))[0]
+				vec = self.data['vec']
+				vec = leastsq(self.__residual_func, np.array(vec), args=(quats, 1023 - np.array(radiances)))[0]
+				print(vec)
 				with self.visualizer.lock:
 					self.data['vec'] = vec
 
@@ -115,7 +127,6 @@ class Server():
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser('Server for IR Localization')
 	parser.add_argument('-p', '--saved_path')
-	parser.add_argument('-f', '--function', help='file which can be read in as energy function. If None is given, the program will only collect data')
 	args = parser.parse_args()
 
 	s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -125,10 +136,6 @@ if __name__ == '__main__':
 	print("Waiting for connection ...")
 	conn, addr = s.accept()
 	print("Connected with ", addr)
-
-	func = None
-	if args.function:
-		pass
 
 	server = Server()
 	server.start_serial_thread()

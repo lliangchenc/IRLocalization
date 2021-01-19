@@ -46,7 +46,7 @@ class IrRadiancePlotter():
 class EnergyFuncPlotter():
 	def __init__(self, ax):
 		self.ax = ax
-		self.ax.set_xlim(-60, 60)
+		self.ax.set_xlim(-30, 30)
 		self.ax.set_ylim(0, 1200)
 		self.ax.set_title('Energy Function')
 		self.quats = []
@@ -54,36 +54,20 @@ class EnergyFuncPlotter():
 		self.scatter = self.ax.scatter([], [], s=5.0)
 		self.lock = threading.Lock()
 
-	def quats_to_angles(self, quats):
-		angles = []
-		if len(quats) == 0:
-			return []
-		vec_origin = normalized(quat_to_mat(quats[0])[1])
-		for q in quats:
-			if q == quats[0]:
-				angles.append(0)
-				continue
-			mat = quat_to_mat(q)
-			vec_forward = normalized(mat[1])
-			vec_upper = mat[2]
-			sgn = np.sign(np.cross(vec_origin, vec_forward).dot(vec_upper))
-			angles.append(np.arccos(vec_forward.dot(vec_origin)) * sgn)
-		return np.degrees(angles)
-
 	def update_data(self, quats=None, radiances=None):
 		self.quats = quats
 		self.radiances = radiances
 
 	def update_plot(self):
-		self.scatter.set_offsets(np.array([self.quats_to_angles(self.quats), self.radiances]).T)
+		self.scatter.set_offsets(np.array([quats_to_angles(self.quats), self.radiances]).T)
 		return self.scatter
 
 
 class LocationPlotter():
 	def __init__(self, ax):
 		self.ax = ax
-		self.ax.set_xlim(-2, 2)
-		self.ax.set_ylim(0, 5)
+		self.ax.set_xlim(-4, 4)
+		self.ax.set_ylim(-4, 4)
 		self.ax.set_title('Sender Location')
 		self.recv_pos = Position(0, 0)
 		self.send_pos = Position()
@@ -141,7 +125,8 @@ class DataCollectionVisualizer(Visualizer):
 class LocalizationVisualizer(Visualizer):
 	def __init__(self):
 		super().__init__()
-		ir_radiance_ax = plt.subplot(211)
-		location_ax = plt.subplot(212)
-		self.plotters[PlotterType.IR_RADIANCE] = IrRadiancePlotter(ir_radiance_ax)
+		# ir_radiance_ax = plt.subplot(211)
+		# location_ax = plt.subplot(212)
+		# self.plotters[PlotterType.IR_RADIANCE] = IrRadiancePlotter(ir_radiance_ax)
+		location_ax = plt.subplot()
 		self.plotters[PlotterType.LOCATION] = LocationPlotter(location_ax)
