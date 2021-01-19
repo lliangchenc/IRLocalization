@@ -12,6 +12,7 @@ import time
 from scipy.optimize import leastsq
 from window import Window
 from visualize import DataCollectionVisualizer
+from copy import deepcopy
 
 HOST = '0.0.0.0'
 PORT = 3527
@@ -27,11 +28,16 @@ class DataCollector():
 			'quats': [],
 			'radiances': []
 		}
-		self.visualizer = DataCollectionVisualizer(self.data)
+		self.visualizer = DataCollectionVisualizer()
+		self.raw_data = {
+			'quats': [],
+			'radiances': []
+		}
 
 	def save_data(self, path):
 		with open(path, 'wb') as f:
-			pickle.dump(self.data, f)
+			# pickle.dump(self.data, f)
+			pickle.dump(self.raw_data, f)
 
 	def start_serial_thread(self):
 		t = threading.Thread(target=self.__recv_data_from_serial, daemon=True)
@@ -43,6 +49,7 @@ class DataCollector():
 			self.lock.acquire()
 			if buf:
 				self.serial_window.push(float(buf))
+				self.raw_data['radiances'].append(float(buf))
 			self.lock.release()
 
 	def start_socket_thread(self, energy_func):
@@ -59,6 +66,7 @@ class DataCollector():
 
 			self.lock.acquire()
 			ir_radiance = self.serial_window.mean_filter()
+			rad_idx = len(self.raw_data['radiances']) - 1
 			self.lock.release()
 
 			multi_quat_list = quat_buf.decode("utf-8").split('\n')[:-1]		# a list of string, each line contains quaternions from multi sources, separated by ';'
@@ -69,9 +77,13 @@ class DataCollector():
 
 			quat = quat_window.get_last()
 
-			self.data['quats'].append(quat)
-			self.data['radiances'].append(ir_radiance)
+			with self.visualizer.lock:
+				self.data['quats'].append(quat)
+				self.data['radiances'].append(ir_radiance)
 			self.visualizer.update_data(self.data)
+
+			self.raw_data['quats'].append([quat, rad_idx])
+			self.raw_data['radiances'].append(ir_radiance)
 
 
 if __name__ == '__main__':

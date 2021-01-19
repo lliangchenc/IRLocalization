@@ -58,6 +58,9 @@ class EnergyFuncPlotter():
 		angles = []
 		vec_origin = normalized(quat_to_mat(quats[0])[1])
 		for q in quats:
+			if q == quats[0]:
+				angles.append(0)
+				continue
 			mat = quat_to_mat(q)
 			vec_forward = normalized(mat[1])
 			vec_upper = mat[2]
@@ -66,17 +69,11 @@ class EnergyFuncPlotter():
 		return angles
 
 	def update_data(self, quats=None, radiances=None):
-		self.lock.acquire()
-		if quats:
-			self.angles = self.quats_to_angles(quats)
-		if radiances:
-			self.radiances = radiances
-		self.lock.release()
+		self.angles = self.quats_to_angles(quats)
+		self.radiances = radiances
 
 	def update_plot(self):
-		self.lock.acquire()
 		self.scatter.set_offsets(np.array([np.degrees(self.angles), self.radiances]).T)
-		self.lock.release()
 		return self.scatter
 
 
@@ -93,7 +90,6 @@ class LocationPlotter():
 	def update_data(self, vec, dis):
 		x, y, z = vec
 		self.send_pos.set(x * dis, y * dis)
-		print(self.send_pos)
 
 	def update_plot(self):
 		self.scatter.set_offsets([[self.recv_pos.x, self.recv_pos.y], [self.send_pos.x, self.send_pos.y]])
@@ -104,21 +100,24 @@ class Visualizer():
 	def __init__(self):
 		self.fig = plt.figure()
 		self.plotters = dict()
+		self.lock = threading.Lock()
 
 	def update_data(self, data):
-		for ptype in self.plotters:
-			plotter = self.plotters[ptype]
-			if ptype == PlotterType.IR_RADIANCE:
-				plotter.update_data(data['radiances'])
-			elif ptype == PlotterType.ENERGY_FUNC:
-				plotter.update_data(data['quats'], data['radiances'])
-			elif ptype == PlotterType.LOCATION:
-				plotter.update_data(data['vec'], data['dis'])
+		with self.lock:
+			for ptype in self.plotters:
+				plotter = self.plotters[ptype]
+				if ptype == PlotterType.IR_RADIANCE:
+					plotter.update_data(data['radiances'])
+				elif ptype == PlotterType.ENERGY_FUNC:
+					plotter.update_data(data['quats'], data['radiances'])
+				elif ptype == PlotterType.LOCATION:
+					plotter.update_data(data['vec'], data['dis'])
 
 	def update_plots(self, step):
 		plots = []
-		for ptype in self.plotters:
-			plots.append(self.plotters[ptype].update_plot())
+		with self.lock:
+			for ptype in self.plotters:
+				plots.append(self.plotters[ptype].update_plot())
 		return plots
 
 	def visualize(self):
@@ -129,9 +128,11 @@ class Visualizer():
 class DataCollectionVisualizer(Visualizer):
 	def __init__(self):
 		super().__init__()
-		ir_radiance_ax = plt.subplot(211)
-		energy_func_ax = plt.subplot(212)
-		self.plotters[PlotterType.IR_RADIANCE] = IrRadiancePlotter(ir_radiance_ax)
+		# ir_radiance_ax = plt.subplot(211)
+		# energy_func_ax = plt.subplot(212)
+		# self.plotters[PlotterType.IR_RADIANCE] = IrRadiancePlotter(ir_radiance_ax)
+		# self.plotters[PlotterType.ENERGY_FUNC] = EnergyFuncPlotter(energy_func_ax)
+		energy_func_ax = plt.subplot()
 		self.plotters[PlotterType.ENERGY_FUNC] = EnergyFuncPlotter(energy_func_ax)
 
 
