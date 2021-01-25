@@ -15,13 +15,15 @@ import android.widget.EditText;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.example.irlocalization.representation.MatrixF4x4;
+import com.example.irlocalization.representation.Quaternion;
+
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.Socket;
 import java.text.DecimalFormat;
-import java.util.Calendar;
 
 public class MainActivity extends AppCompatActivity {
     private String TAG = "MainActivity";
@@ -30,7 +32,9 @@ public class MainActivity extends AppCompatActivity {
 
     EditText portEditText;
     EditText hostEditText;
-    TextView IMUtextView;
+    TextView IMUMagneticTextView;
+    TextView IMUGyroTextView;
+    TextView IMUTextView;
     Button connectButton;
     Button startButton;
 
@@ -45,14 +49,24 @@ public class MainActivity extends AppCompatActivity {
     PrintWriter out;
     BufferedReader in;
 
-    long timestamp;
+    Handler mQuatHandler;
+    Runnable mUpdateQuat;
 
-    private float[] mRotationMatrix = new float[9];
-    private final float[] accelerometerReading = new float[3];
-    private final float[] magnetometerReading = new float[3];
-    Handler mRotMatHandler;
-    Runnable mUpdateRotMat;
-    final long UPDATE_ROT_MAT_TIME = 10;   // 10 ms
+    final int UPDATE_QUAT_TIME = 10;
+
+    long timeDelay;
+
+    private static final float NS2S = 1.0f / 1000000000.0f;
+    private final Quaternion deltaQuaternion = new Quaternion();
+    private long timestamp;
+    private static final double EPSILON = 0.1f;
+    private double gyroscopeRotationVelocity = 0;
+    private Quaternion correctedQuaternion = new Quaternion();
+    protected final Object synchronizationToken = new Object();
+    protected final Quaternion currentOrientationQuaternion = new Quaternion();
+    protected final MatrixF4x4 currentOrientationRotationMatrix = new MatrixF4x4();
+    private boolean initializedFlag = false;
+    private int initialCount = 0;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -67,7 +81,9 @@ public class MainActivity extends AppCompatActivity {
         hostEditText = findViewById(R.id.editTextHost);
         connectButton = findViewById(R.id.buttonConnect);
         startButton = findViewById(R.id.buttonStart);
-        IMUtextView = findViewById(R.id.IMUtextView);
+        IMUMagneticTextView = findViewById(R.id.IMUMageneticTextView);
+        IMUGyroTextView = findViewById(R.id.IMUGyroTextView);
+        IMUTextView = findViewById(R.id.IMUTextView);
 
         startButton.setEnabled(false);
         connectButton.setOnClickListener(new View.OnClickListener() {
@@ -99,29 +115,63 @@ public class MainActivity extends AppCompatActivity {
                 startFlag = !startFlag;
                 if (startFlag) {
                     startButton.setText("End");
-                    mRotMatHandler.postDelayed(mUpdateRotMat, UPDATE_ROT_MAT_TIME);
+                    mQuatHandler.postDelayed(mUpdateQuat, UPDATE_QUAT_TIME);
                 } else {
                     startButton.setText("Start");
-                    mRotMatHandler.removeCallbacks(mUpdateRotMat);
+                    mQuatHandler.removeCallbacks(mUpdateQuat);
                 }
             }
         });
 
-        mRotMatHandler = new Handler();
-        mUpdateRotMat = new Runnable() {
+        mQuatHandler = new Handler();
+        mUpdateQuat = new Runnable() {
             @Override
             public void run() {
-                SensorManager.getRotationMatrix(mRotationMatrix, null,
-                        accelerometerReading, magnetometerReading);
-                DecimalFormat format = new DecimalFormat(("0.000"));
-                IMUtextView.setText(format.format(mRotationMatrix[3]) + " " + format.format(mRotationMatrix[4]) + " " + format.format(mRotationMatrix[5]));
+//                SensorManager.getRotationMatrix(mRotationMatrixMagnetic, null,
+//                        accelerometerReading, magnetometerReading);
+
+                DecimalFormat format = new DecimalFormat(("0.00000"));
+                double[] vec = new double[3];
+                quatToForwardVec(currentOrientationQuaternion, vec);
+                IMUGyroTextView.setText("Rot Vec: " +
+                        format.format(vec[0]) + " " +
+                        format.format(vec[1]) + " " +
+                        format.format(vec[2])
+                );
+                IMUTextView.setText("Quat: " +
+                        format.format(Math.abs(currentOrientationQuaternion.x())) + " " +
+                        format.format(Math.abs(currentOrientationQuaternion.y())) + " " +
+                        format.format(Math.abs(currentOrientationQuaternion.z())) + " " +
+                        format.format(Math.abs(currentOrientationQuaternion.w()))
+                );
                 if (startFlag && out != null) {
-                    out.println(mRotationMatrix[3] + " " + mRotationMatrix[4] + " " + mRotationMatrix[5]);
+                    new Thread(new Runnable() {
+                        @Override
+                        public void run() {
+                            out.println(currentOrientationQuaternion.x() + " " + currentOrientationQuaternion.y() + " " + currentOrientationQuaternion.z() + " " + currentOrientationQuaternion.w());
+                            out.flush();
+                            timeDelay = System.currentTimeMillis();
+                        }
+                    }).start();
                 }
-                mRotMatHandler.postDelayed(this, UPDATE_ROT_MAT_TIME);
+                mQuatHandler.postDelayed(this, UPDATE_QUAT_TIME);
             }
         };
-        mRotMatHandler.postDelayed(mUpdateRotMat, UPDATE_ROT_MAT_TIME);
+        mQuatHandler.postDelayed(mUpdateQuat, UPDATE_QUAT_TIME);
+    }
+
+    protected void quatToForwardVec(Quaternion quat, double[] vec) {
+        double x = quat.x();
+        double y = quat.y();
+        double z = quat.z();
+        double w = quat.w();
+        vec[0] = 2 * y * z - 2 * w * x;
+        vec[1] = x * x - y * y + z * z - w * w;
+        vec[2] = 2 * z * w + 2 * x * y;
+        double norm = Math.sqrt(vec[0] * vec[0] + vec[1] * vec[1] + vec[2] * vec[2]);
+        vec[0] /= norm;
+        vec[1] /= norm;
+        vec[2] /= norm;
     }
 
     @Override
@@ -129,26 +179,36 @@ public class MainActivity extends AppCompatActivity {
         super.onPause();
         // make sure to turn our sensor off when the activity is paused
         mSensorManager.unregisterListener(mListener);
-        mRotMatHandler.removeCallbacks(mUpdateRotMat);
+        mQuatHandler.removeCallbacks(mUpdateQuat);
     }
 
     @Override
     protected void onResume() {
         super.onResume();
         // enable our sensor when the activity is resumed
-        Sensor accelerometer = mSensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
-        if (accelerometer != null) {
-            mSensorManager.registerListener(mListener, accelerometer,
-                    SensorManager.SENSOR_DELAY_NORMAL, SensorManager.SENSOR_DELAY_UI);
+        Sensor rotationVector = mSensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR);
+        if (rotationVector != null) {
+            mSensorManager.registerListener(mListener, rotationVector, SensorManager.SENSOR_DELAY_GAME);
         }
-        Sensor magneticField = mSensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD);
-        if (magneticField != null) {
-            mSensorManager.registerListener(mListener, magneticField,
-                    SensorManager.SENSOR_DELAY_NORMAL, SensorManager.SENSOR_DELAY_UI);
+//        Sensor accelerometer = mSensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+//        if (accelerometer != null) {
+//            mSensorManager.registerListener(mListener, accelerometer,
+//                    SensorManager.SENSOR_DELAY_NORMAL, SensorManager.SENSOR_DELAY_UI);
+//        }
+//        Sensor magneticField = mSensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD);
+//        if (magneticField != null) {
+//            mSensorManager.registerListener(mListener, magneticField,
+//                    SensorManager.SENSOR_DELAY_NORMAL, SensorManager.SENSOR_DELAY_UI);
+//        }
+        Sensor gyroscope = mSensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
+        if (gyroscope != null) {
+            mSensorManager.registerListener(mListener, gyroscope, SensorManager.SENSOR_DELAY_GAME);
         }
         if (startFlag) {
-            mRotMatHandler.postDelayed(mUpdateRotMat, UPDATE_ROT_MAT_TIME);
+            mQuatHandler.postDelayed(mUpdateQuat, UPDATE_QUAT_TIME);
         }
+        initializedFlag = false;
+        initialCount = 0;
     }
 
     private void setUpSocket() {
@@ -158,18 +218,16 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void run() {
                 try {
-                    Log.d(TAG, host);
-                    Log.d(TAG,String.valueOf(port));
                     socket = new Socket(host, port);
+                    Log.d(TAG, String.valueOf(socket.isConnected()));
+                    Log.d(TAG, String.valueOf(socket.isClosed()));
                     out = new PrintWriter(socket.getOutputStream(), true);
                     in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
                     while (true) {
-                        Log.d(TAG, "??");
-                        String res = in.readLine();
-                        if (res != null) {
-                            Log.d(TAG, "Send timestamp: " + timestamp);
-                            Log.d(TAG, "Recv timestamp: " + System.currentTimeMillis());
-                        }
+                        Log.d(TAG, "Reading");
+                        in.readLine();
+                        timeDelay = (System.currentTimeMillis() - timeDelay) / 2;
+                        Log.d(TAG, "time delay is " + timeDelay);
                     }
                 } catch (IOException e) {
                     Log.d(TAG, e.toString());
@@ -181,13 +239,72 @@ public class MainActivity extends AppCompatActivity {
 
     private class RotationListener implements SensorEventListener {
         public void onSensorChanged(SensorEvent event) {
-            if (event.sensor.getType() == Sensor.TYPE_ACCELEROMETER) {
-                System.arraycopy(event.values, 0, accelerometerReading,
-                        0, accelerometerReading.length);
-            } else if (event.sensor.getType() == Sensor.TYPE_MAGNETIC_FIELD) {
-                System.arraycopy(event.values, 0, magnetometerReading,
-                        0, magnetometerReading.length);
+            if (event.sensor.getType() == Sensor.TYPE_GYROSCOPE /* && initializedFlag */) {
+                // This timestamps delta rotation to be multiplied by the current rotation
+                // after computing it from the gyro sample data.
+                if (timestamp != 0) {
+                    final float dT = (event.timestamp - timestamp) * NS2S;
+                    // Axis of the rotation sample, not normalized yet.
+                    float axisX = event.values[0];
+                    float axisY = event.values[1];
+                    float axisZ = event.values[2];
+
+                    // Calculate the angular speed of the sample
+                    gyroscopeRotationVelocity = Math.sqrt(axisX * axisX + axisY * axisY + axisZ * axisZ);
+
+                    // Normalize the rotation vector if it's big enough to get the axis
+                    if (gyroscopeRotationVelocity > EPSILON) {
+                        axisX /= gyroscopeRotationVelocity;
+                        axisY /= gyroscopeRotationVelocity;
+                        axisZ /= gyroscopeRotationVelocity;
+                    }
+
+                    // Integrate around this axis with the angular speed by the timestep
+                    // in order to get a delta rotation from this sample over the timestep
+                    // We will convert this axis-angle representation of the delta rotation
+                    // into a quaternion before turning it into the rotation matrix.
+                    double thetaOverTwo = gyroscopeRotationVelocity * dT / 2.0f;
+                    double sinThetaOverTwo = Math.sin(thetaOverTwo);
+                    double cosThetaOverTwo = Math.cos(thetaOverTwo);
+                    deltaQuaternion.setX((float) (sinThetaOverTwo * axisX));
+                    deltaQuaternion.setY((float) (sinThetaOverTwo * axisY));
+                    deltaQuaternion.setZ((float) (sinThetaOverTwo * axisZ));
+                    deltaQuaternion.setW(-(float) cosThetaOverTwo);
+
+                    // Matrix rendering in CubeRenderer does not seem to have this problem.
+                    synchronized (synchronizationToken) {
+                        // Move current gyro orientation if gyroscope should be used
+                        deltaQuaternion.multiplyByQuat(currentOrientationQuaternion, currentOrientationQuaternion);
+                    }
+
+                    correctedQuaternion.set(currentOrientationQuaternion);
+                    // We inverted w in the deltaQuaternion, because currentOrientationQuaternion required it.
+                    // Before converting it back to matrix representation, we need to revert this process
+                    correctedQuaternion.w(-correctedQuaternion.w());
+
+                    synchronized (synchronizationToken) {
+                        // Set the rotation matrix as well to have both representations
+                        SensorManager.getRotationMatrixFromVector(currentOrientationRotationMatrix.matrix,
+                                correctedQuaternion.array());
+                    }
+                }
+                timestamp = event.timestamp;
             }
+//            else if (event.sensor.getType() == Sensor.TYPE_ROTATION_VECTOR && !initializedFlag) {
+//                currentOrientationQuaternion.setX(event.values[0]);
+//                currentOrientationQuaternion.setY(event.values[1]);
+//                currentOrientationQuaternion.setZ(event.values[2]);
+//                currentOrientationQuaternion.setW(event.values[3]);
+//                correctedQuaternion.set(currentOrientationQuaternion);
+//                correctedQuaternion.w(-correctedQuaternion.w());
+//                synchronized (synchronizationToken) {
+//                    SensorManager.getRotationMatrixFromVector(currentOrientationRotationMatrix.matrix,
+//                            correctedQuaternion.array());
+//                }
+//                initialCount++;
+//                if (initialCount > 100)
+//                    initializedFlag = true;
+//            }
         }
         public void onAccuracyChanged(Sensor sensor, int accuracy) {
         }
