@@ -52,6 +52,12 @@ class EnergyFuncPlotter():
 		self.quats = []
 		self.radiances = []
 		self.scatter = self.ax.scatter([], [], s=5.0)
+		
+		def energy_func(angles, dis, a=4.92873817e+02, b=8.79798507e-02, c=2.31588585e+02, sigma=1.07337037e-02):
+			return (a * np.exp(-np.tan(angles - b) ** 2 / sigma) \
+				+ a * np.exp(-np.tan(angles + b) ** 2 / sigma)) * 1.8 * 1.8/ dis ** 2 + c
+		radians = np.linspace(-0.5, 0.5, 200)
+		ax.plot(np.degrees(radians), energy_func(radians, 1.8))
 		self.lock = threading.Lock()
 
 	def update_data(self, quats=None, radiances=None):
@@ -74,8 +80,11 @@ class LocationPlotter():
 		self.scatter = self.ax.scatter([self.recv_pos.x], [self.recv_pos.y])
 
 	def update_data(self, vec):
-		x, y, z = vec
-		self.send_pos.set(x, y)
+		if vec is not None:
+			x, y, z = -vec
+			self.send_pos.set(y, z)
+		# else:
+			# print('Encountered None!')
 
 	def update_plot(self):
 		self.scatter.set_offsets([[self.recv_pos.x, self.recv_pos.y], [self.send_pos.x, self.send_pos.y]])

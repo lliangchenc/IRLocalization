@@ -38,7 +38,7 @@ public class MainActivity extends AppCompatActivity {
     Button connectButton;
     Button startButton;
 
-//    private IrEmitter mIrEmitter;
+    private IrEmitter mIrEmitter;
     private SensorManager mSensorManager;
     private RotationListener mListener;
 
@@ -73,7 +73,7 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-//        mIrEmitter = new IrEmitter(this);
+        mIrEmitter = new IrEmitter(this);
         mSensorManager = (SensorManager)getSystemService(SENSOR_SERVICE);
         mListener = new RotationListener();
 
@@ -111,7 +111,7 @@ public class MainActivity extends AppCompatActivity {
         startButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-//                mIrEmitter.toggle();
+                mIrEmitter.toggle();
                 startFlag = !startFlag;
                 if (startFlag) {
                     startButton.setText("End");

@@ -14,10 +14,11 @@ from scipy.optimize import leastsq
 from window import Window
 from visualize import DataCollectionVisualizer, LocalizationVisualizer
 from utils import *
+from pyfirmata import Arduino
 
 HOST = '0.0.0.0'
-PORT = 3528
-SERIAL_PORT = '/dev/cu.usbmodem142101'
+PORT = 3527
+SERIAL_PORT = '/dev/cu.usbmodem142401'
 WINDOW_SIZE = 10
 PRED_WIN_SIZE = 20
 
@@ -31,13 +32,18 @@ class Server():
 			'radiances': [],
 			'vec': None
 		}
-		# self.visualizer = DataCollectionVisualizer()
-		self.visualizer = LocalizationVisualizer()
+		self.visualizer = DataCollectionVisualizer()
+		# self.visualizer = LocalizationVisualizer()
 		self.raw_data = {
 			'quats': [],
 			'radiances': []
 		}
-		self.energy_func = self.__energy_func
+		# self.energy_func = self.__energy_func
+		self.energy_func = None
+
+		# Arduino
+		board = Arduino(SERIAL_PORT)
+		self.pin = board.get_pin('a:3:i')
 
 	def save_data(self, path=None):
 		if path: 
@@ -51,7 +57,9 @@ class Server():
 
 	def __recv_data_from_serial(self):
 		while True:
-			buf = self.ser.readline().decode()[:-2]	# strip '\r\n'
+			# buf = self.ser.readline().decode()[:-2]	# strip '\r\n'
+			buf = self.pin.read()
+			print(buf)
 			self.lock.acquire()
 			if len(buf) > 0:
 				self.serial_window.push(float(buf))
@@ -62,27 +70,36 @@ class Server():
 		t = threading.Thread(target=self.__recv_data_from_socket, daemon=True)
 		t.start()
 
-	def __energy_func(self, angles, dis, a=6.84091229e+02, b=8.39663324e-02, c=8.91691985e+01, sigma=9.70062189e-03):
+	def __energy_func(self, angles, dis, a=4.92873817e+02, b=8.79798507e-02, c=2.31588585e+02, sigma=1.07337037e-02):
 		return (a * np.exp(-np.tan(angles - b) ** 2 / sigma) \
-        	+ a * np.exp(-np.tan(angles + b) ** 2 / sigma)) / dis ** 2 + c
+        	+ a * np.exp(-np.tan(angles + b) ** 2 / sigma)) * 1.8 * 1.8/ dis ** 2 + c
 
-	def __fit_func(self, vec, quats):
+	def __fit_func(self, vec, quats, prev_vec):
 		d = np.linalg.norm(vec)
 		vec = vec / d
 		radiances = []
 		t = time.time()
+		def vec_dis(vec1, vec2):
+			vec1 = np.array(vec1)
+			vec2 = np.array(vec2)
+			return np.sum((vec2 - vec1) ** 2)
+		factor = 100
 		for q in quats:
 			mat = quat_to_mat(q)
 			forward_vec = normalized(mat[1])
 			upper_vec = mat[2]
 			sgn = np.sign(np.cross(vec, forward_vec).dot(upper_vec))
 			angle = np.arccos(forward_vec.dot(vec) * sgn)
-			radiances.append(self.__energy_func(angle, d))
+			dis_to_prev_vec = 0
+			if prev_vec is not None:
+				dis_to_prev_vec = vec_dis(vec, prev_vec)
+			# print(dis_to_prev_vec * factor)
+			radiances.append(self.__energy_func(angle, d) + dis_to_prev_vec * factor)
 		return radiances
 
-	def __residual_func(self, vec, quats, radiances):
+	def __residual_func(self, vec, quats, radiances, prev_vec):
 		t = time.time()
-		val = (np.array(self.__fit_func(vec, quats)) - np.array(radiances)) ** 2
+		val = (np.array(self.__fit_func(vec, quats, prev_vec)) - np.array(radiances)) ** 2
 		return val
 
 
@@ -96,9 +113,9 @@ class Server():
 				break
 
 			# wait for 10 frames of ir radiance for alignment
-			# l = len(self.raw_data['radiances'])
-			# while len(self.raw_data['radiances']) - l < 10:
-			# 	time.sleep(0.001)
+			l = len(self.raw_data['radiances'])
+			while len(self.raw_data['radiances']) - l < 10:
+				continue
 			with self.lock:
 				ir_radiance = self.serial_window.mean_filter()
 				rad_idx = len(self.raw_data['radiances']) - 1
@@ -112,15 +129,16 @@ class Server():
 					print(quat)
 					print(quats)
 				quat_window.push(quat)
+				self.raw_data['quats'].append(quat)
 
 			quat = quat_window.get_last()
 
 			with self.visualizer.lock:
 				self.data['quats'].append(quat)
-				self.data['radiances'].append(ir_radiance)
+				self.data['radiances'].append(1023 - ir_radiance)
 
 			calc_pos_cnt += 1
-			if self.energy_func and calc_pos_cnt > 5 and len(self.data['quats']) > PRED_WIN_SIZE:
+			if self.energy_func and calc_pos_cnt > 20 and len(self.data['quats']) > PRED_WIN_SIZE:
 				calc_pos_cnt = 0
 				def runner():
 					quats = self.data['quats'][-PRED_WIN_SIZE:]
@@ -131,10 +149,10 @@ class Server():
 					# 	vec = self.data['vec']
 					vec = quat_to_mat(quats[0])[1]
 					t = time.time()
-					vec = leastsq(self.__residual_func, np.array(vec), maxfev=50, args=(quats, 1023 - np.array(radiances)))[0]
+					vec = leastsq(self.__residual_func, np.array(vec), maxfev=100, args=(quats, 1023 - np.array(radiances), self.data['vec']))[0]
 					# print('elapsed time: ', time.time() - t)
 					if self.data['vec'] is not None:
-						print('Radiance with current vec:', self.__fit_func(self.data['vec'], quats)[0])
+						print('Radiance with current vec:', self.__fit_func(self.data['vec'], quats, self.data['vec'])[0])
 					print('radiance: ', 1023 - radiances[0])
 					# print('vec: ', vec)
 					if math.isnan(vec[0]) or math.isnan(vec[1]) or math.isnan(vec[2]):
@@ -145,10 +163,11 @@ class Server():
 				th = threading.Thread(target=runner)
 				th.start()
 
-			# self.visualizer.update_data(self.data)
+			self.visualizer.update_data(self.data)
 
-			self.raw_data['quats'].append([quat, rad_idx])
-			self.raw_data['radiances'].append(ir_radiance)
+			# self.raw_data['quats'].append([quat, rad_idx])
+			# self.raw_data['radiances'].append(ir_radiance)
+			self.raw_data['radiances'].append([ir_radiance, ])
 
 
 if __name__ == '__main__':

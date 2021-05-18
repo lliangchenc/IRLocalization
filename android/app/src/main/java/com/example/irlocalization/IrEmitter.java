@@ -2,12 +2,14 @@ package com.example.irlocalization;
 
 import android.content.Context;
 import android.hardware.ConsumerIrManager;
+import android.util.Log;
 import android.widget.Toast;
 
 public class IrEmitter {
+    private final String TAG = "IrEmitter";
     ConsumerIrManager cIr;
     int frequency;
-    int[] pattern = {100};  // TODO: how to determine pattern?
+    int[] pattern = {1000000}; // turn on for one second
     boolean hasIrEmitter;
     boolean isOn = false;
     Context ctx;
@@ -29,7 +31,8 @@ public class IrEmitter {
             if (range == null) {
                 Toast.makeText(ctx, "Fail to get IR frequency", Toast.LENGTH_SHORT).show();
             } else {
-                frequency = range[0].getMinFrequency();
+//                frequency = range[0].getMinFrequency();
+                frequency = 38000;
             }
         }
     }

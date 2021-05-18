@@ -31,7 +31,7 @@
             android:layout_height="wrap_content"
             android:ems="10"
             android:inputType="textPersonName"
-            android:text="183.173.82.34"
+            android:text="192.168.6.187"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintStart_toEndOf="@+id/host_label"
             app:layout_constraintTop_toTopOf="parent" />
